@@ -4,57 +4,33 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Services\OrderService;
+use App\Http\Requests\StoreOrderRequest;
+
 
 class OrderController extends Controller
 {
-    public function store(Request $request)
+    protected OrderService $orderService;
+
+    public function __construct(OrderService $orderService)
     {
-        $userId = $request->input('user_id');
-        $items = $request->input('items'); // should be array of ['product_id' => int, 'quantity' => int]
+        $this->orderService = $orderService;
+    }
 
-        if (!$userId || !$items) {
-            return response()->json(['error' => 'Invalid input'], 400);
-        }
-
-        DB::beginTransaction();
+    public function store(StoreOrderRequest $request)
+    {
         try {
-            $total = 0;
+            $payload = $request->validated();
+            $response = $this->orderService->CreateOrder($payload['user_id'], $payload['items']);
+            return response()->json($response, 201);
+        } catch (\Exception $e) {
+            $message = $e->getMessage();
 
-            foreach ($items as $item) {
-                $product = DB::table('products')->find($item['product_id']);
-                if (!$product) {
-                    return response()->json(['error' => 'Product not found'], 404);
-                }
-
-                if ($product->stock <= 0) {
-                    DB::rollBack();
-                    return response()->json(['error' => 'Out of stock'], 400);
-                }
-
-                DB::table('order_items')->insert([
-                    'order_id' => null,
-                    'product_id' => $item['product_id'],
-                    'quantity' => $item['quantity'],
-                    'price' => $product->price,
-                ]);
-
-                DB::table('products')->where('id', $product->id)
-                    ->update(['stock' => $product->stock - $item['quantity']]);
-
-                $total += $product->price * $item['quantity'];
+            if ($message == 'Product not found') {
+                return response()->json(['error' => 'Product not found'], 404);
             }
 
-            $orderId = DB::table('orders')->insertGetId([
-                'user_id' => $userId,
-                'total' => $total,
-                'created_at' => now(),
-            ]);
-
-            DB::commit();
-            return response()->json(['order_id' => $orderId, 'total' => $total], 201);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json(['error' => $e->getMessage()], 500);
+            return response()->json(['error' => $message], 400);
         }
     }
 }
